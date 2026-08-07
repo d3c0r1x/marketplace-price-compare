@@ -11,6 +11,10 @@ DEMO_MODE = os.getenv("MARKET_DEMO_MODE", "0") == "1"
 CHECK_INTERVAL_MINUTES = int(os.getenv("MARKET_CHECK_INTERVAL_MINUTES", "240"))
 # Сколько результатов искать в каждом маркетплейсе
 MAX_RESULTS_PER_MARKET = int(os.getenv("MARKET_MAX_RESULTS_PER_MARKET", "5"))
+# API-ключ Yandex Market (бесплатный, выдаётся в кабинете разработчика Yandex)
+YANDEX_API_KEY = os.getenv("MARKET_YANDEX_API_KEY", "")
+# Регион поиска Yandex Market (213 = Москва; 225 = Россия)
+YANDEX_REGION = int(os.getenv("MARKET_YANDEX_REGION", "213"))
 
 # --- Транспорт HTTP (антибот-устойчивость, см. adapters/) ---
 #   curl_cffi — имитация TLS/HTTP2-отпечатка Chrome (по умолчанию)

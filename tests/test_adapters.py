@@ -1,4 +1,4 @@
-"""Тесты P11: парсинг выдач WB и Ozon, mock-адаптеры, устойчивость.
+"""Тесты P11: парсинг выдач WB, Ozon и Yandex Market, mock-адаптеры, устойчивость.
 
 Запуск: python -m pytest tests -q
 """
@@ -7,6 +7,7 @@ import json
 
 from adapters.ozon import MockOzonAdapter, OzonAdapter
 from adapters.wb import MockWbAdapter, WbAdapter
+from adapters.yandex import MockYandexAdapter, YandexAdapter
 
 
 class FakeTransport:
@@ -17,7 +18,7 @@ class FakeTransport:
         self.calls: list[tuple[str, dict | None]] = []
 
     async def get(self, url: str, *, params=None, headers=None) -> tuple[int, str]:
-        self.calls.append((url, params))
+        self.calls.append((url, params, headers))
         if not self.responses:
             raise RuntimeError("FakeTransport: пустой список ответов")
         idx = min(len(self.calls) - 1, len(self.responses) - 1)
@@ -139,14 +140,76 @@ def test_ozon_dedup_same_product() -> None:
     assert len(products) == 1
 
 
+
+# --------------------------------------------------------------- Yandex
+
+def _yandex_search_response(raw_products: list[dict]) -> str:
+    return json.dumps({"items": raw_products})
+
+
+def test_yandex_parse_product() -> None:
+    """parse_product: цены из рублей с дробной частью, ссылка, остатков нет."""
+    p = YandexAdapter.parse_product(
+        {
+            "id": 1735217196,
+            "name": "Наушники",
+            "prices": {"value": 5499.0, "oldValue": 6999.0},
+            "rating": 4.5,
+        }
+    )
+    assert p is not None
+    assert p.marketplace == "yandex"
+    assert p.price == 5499 and p.old_price == 6999
+    assert p.stock is None
+    assert "market.yandex.ru" in p.url
+
+
+def test_yandex_parse_missing_id_none() -> None:
+    assert YandexAdapter.parse_product({"name": "no id"}) is None
+
+
+def test_yandex_search_via_fake_transport() -> None:
+    """Ключ уходит в Authorization; query и regionId передаются в параметрах."""
+    payload = _yandex_search_response([
+        {"id": 10, "name": "Товар Y1", "prices": {"value": 5499.0}},
+        {"id": 11, "name": "Товар Y2", "prices": {"value": 6999.0}},
+    ])
+    transport = FakeTransport([(200, payload)])
+    adapter = YandexAdapter(api_key="secret", transport=transport, max_retries=2)
+    products = asyncio.run(adapter.search("наушники", limit=5))
+    assert len(products) == 2
+    assert products[0].price == 5499
+    url, params, headers = transport.calls[0]
+    assert url == "https://api.content.market.yandex.ru/v2/models"
+    assert params["query"] == "наушники" and params["regionId"] == 213
+    # ключ реально уходит в Authorization (регрессия: раньше терялся)
+    assert headers["Authorization"] == "secret"
+
+
+def test_yandex_no_key_no_network() -> None:
+    """Без ключа адаптер не ходит в сеть и возвращает пустую выдачу."""
+    transport = FakeTransport([(200, "{}")])
+    adapter = YandexAdapter(api_key="", transport=transport, max_retries=2)
+    assert asyncio.run(adapter.search("тест", limit=5)) == []
+    assert transport.calls == []
+
+
+def test_yandex_bad_key_returns_empty() -> None:
+    """HTTP 401 (недействительный ключ) -> пустая выдача, без исключений."""
+    transport = FakeTransport([(401, "unauthorized")])
+    adapter = YandexAdapter(api_key="wrong", transport=transport, max_retries=2)
+    assert asyncio.run(adapter.search("тест", limit=5)) == []
+
 # --------------------------------------------------------------- mock
 
 def test_mock_adapters_deterministic() -> None:
-    """Демо-режим: одинаковый запрос -> одинаковые цены, оба маркетплейса."""
+    """Демо-режим: одинаковый запрос -> одинаковые цены, все три маркетплейса."""
     wb1 = asyncio.run(MockWbAdapter().search("смартфон"))
     wb2 = asyncio.run(MockWbAdapter().search("смартфон"))
     oz = asyncio.run(MockOzonAdapter().search("смартфон"))
+    ya = asyncio.run(MockYandexAdapter().search("смартфон"))
     assert [p.price for p in wb1] == [p.price for p in wb2]
-    assert len(wb1) == len(oz) == 5
+    assert len(wb1) == len(oz) == len(ya) == 5
     assert all(p.marketplace == "wb" for p in wb1)
     assert all(p.marketplace == "ozon" for p in oz)
+    assert all(p.marketplace == "yandex" for p in ya)

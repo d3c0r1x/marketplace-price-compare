@@ -4,7 +4,7 @@
 pydantic (модель товара).
 
 Функции:
-  - /search ЗАПРОС — сравнить цены на WB и Ozon, показать отсортированную
+  - /search ЗАПРОС — сравнить цены на WB, Ozon и Яндекс Маркете, показать отсортированную
     выдачу с пометкой самого дешёвого варианта;
   - /watch ЗАПРОС [ЦЕНА] — подписаться на запрос: бот периодически ищет
     заново и уведомляет, если лучшая цена упала или достигла порога;
@@ -30,7 +30,14 @@ from aiogram.types import Message
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import config
-from adapters import MockOzonAdapter, MockWbAdapter, OzonAdapter, WbAdapter
+from adapters import (
+    MockOzonAdapter,
+    MockWbAdapter,
+    MockYandexAdapter,
+    OzonAdapter,
+    WbAdapter,
+    YandexAdapter,
+)
 from alerts import should_notify
 from comparator import best_deal, compare
 from db import Database
@@ -58,7 +65,11 @@ def _fmt_product(p: Product, cheapest: bool = False) -> str:
     """Строка товара для выдачи."""
     price = f"<b>{p.price} ₽</b>" if p.price and p.price > 0 else "цена неизвестна"
     old = f" <s>{p.old_price} ₽</s>" if p.old_price else ""
-    market = "🟣 WB" if p.marketplace == "wb" else "🟢 Ozon"
+    market = {
+        "wb": "🟣 WB",
+        "ozon": "🟢 Ozon",
+        "yandex": "🔵 Яндекс",
+    }.get(p.marketplace, p.marketplace.upper())
     badge = " 🏆" if cheapest else ""
     stock = f", остаток {p.stock}" if p.stock not in (None, 0) else ""
     return (
@@ -70,8 +81,17 @@ def _fmt_product(p: Product, cheapest: bool = False) -> str:
 def _make_adapters() -> list:
     if config.DEMO_MODE:
         logger.info("Адаптеры: демо-режим (выдуманные данные)")
-        return [MockWbAdapter(), MockOzonAdapter()]
-    return [WbAdapter(), OzonAdapter()]
+        return [MockWbAdapter(), MockOzonAdapter(), MockYandexAdapter()]
+    adapters = [WbAdapter(), OzonAdapter()]
+    if config.YANDEX_API_KEY:
+        adapters.append(YandexAdapter(api_key=config.YANDEX_API_KEY,
+                                      region_id=config.YANDEX_REGION))
+    else:
+        logger.warning(
+            "MARKET_YANDEX_API_KEY не задан — Yandex Market пропущен "
+            "(ключ бесплатный, см. .env.example)"
+        )
+    return adapters
 
 
 # ---------------------------------------------------------------- команды
@@ -79,17 +99,17 @@ def _make_adapters() -> list:
 @router.message(CommandStart())
 async def cmd_start(message: Message) -> None:
     await message.answer(
-        "Привет! Я бот <b>Marketplace Price Comparison</b>.\\n\\n"
-        "Сравниваю цены на одни и те же товары на <b>Wildberries</b> и <b>Ozon</b>.\\n\\n"
-        "Команды:\\n"
-        "• /search <b>ЗАПРОС</b> — сравнить цены прямо сейчас\\n"
-        "• /watch <b>ЗАПРОС [ЦЕНА]</b> — следить за запросом, уведомить при падении цены\\n"
-        "• /watches — мои подписки\\n"
-        "• /unwatch <b>ID</b> — удалить подписку\\n"
-        "• /history <b>ID</b> — история лучших цен по подписке\\n"
-        "• /diag — диагностика доступа к API\\n"
-        "• /stats — сводка по базе\\n"
-        "• /cleanup <b>ДНИ</b> — очистить историю (админ)\\n\\n"
+        "Привет! Я бот <b>Marketplace Price Comparison</b>.\n\n"
+        "Сравниваю цены на одни и те же товары на <b>Wildberries</b>, <b>Ozon</b> и <b>Яндекс Маркете</b>.\n\n"
+        "Команды:\n"
+        "• /search <b>ЗАПРОС</b> — сравнить цены прямо сейчас (WB + Ozon + Яндекс)\n"
+        "• /watch <b>ЗАПРОС [ЦЕНА]</b> — следить за запросом, уведомить при падении цены\n"
+        "• /watches — мои подписки\n"
+        "• /unwatch <b>ID</b> — удалить подписку\n"
+        "• /history <b>ID</b> — история лучших цен по подписке\n"
+        "• /diag — диагностика доступа к API\n"
+        "• /stats — сводка по базе\n"
+        "• /cleanup <b>ДНИ</b> — очистить историю (админ)\n\n"
         "Пример: /search смартфон 5000 маха"
     )
 
@@ -100,7 +120,7 @@ async def cmd_search(message: Message) -> None:
     if not query:
         await message.answer("Формат: /search ЗАПРОС (например, /search наушники беспроводные)")
         return
-    await message.answer(f"🔍 Ищу «{query}» на Wildberries и Ozon…")
+    await message.answer(f"🔍 Ищу «{query}» на Wildberries, Ozon и Яндекс Маркете…")
     products, best = await _compare_cached(query)
     if not products:
         await message.answer(
@@ -110,7 +130,7 @@ async def cmd_search(message: Message) -> None:
         return
     lines = [_fmt_product(p, cheapest=(best is not None and p.ext_id == best.ext_id and p.marketplace == best.marketplace))
              for p in products]
-    await message.answer("📊 <b>Сравнение цен:</b>\\n" + "\\n".join(lines))
+    await message.answer("📊 <b>Сравнение цен:</b>\n" + "\n".join(lines))
 
 
 async def _compare_cached(query: str) -> tuple[list[Product], Product | None]:
@@ -143,14 +163,14 @@ async def cmd_watch(message: Message) -> None:
     await db.save_check(watch_id, best_price, best.marketplace if best else "—")
     await db.update_last_notified(watch_id, best_price)
     txt = (
-        f"✅ Подписка #{watch_id} на запрос «{query}» создана.\\n"
+        f"✅ Подписка #{watch_id} на запрос «{query}» создана.\n"
         f"Текущая лучшая цена: <b>{best_price} ₽</b>"
         + (f" ({best.marketplace.upper()})" if best else "")
     )
     if threshold:
-        txt += f"\\nУведомлю, когда лучшая цена опустится до {threshold} ₽ или ниже."
+        txt += f"\nУведомлю, когда лучшая цена опустится до {threshold} ₽ или ниже."
     else:
-        txt += "\\nУведомлю при каждом падении лучшей цены."
+        txt += "\nУведомлю при каждом падении лучшей цены."
     await message.answer(txt)
 
 
@@ -168,7 +188,7 @@ async def cmd_watches(message: Message) -> None:
         if w["last_best_price"]:
             text += f", лучшая: <b>{w['last_best_price']} ₽</b>"
         lines.append(text)
-    await message.answer("👁 <b>Ваши подписки:</b>\\n" + "\\n".join(lines))
+    await message.answer("👁 <b>Ваши подписки:</b>\n" + "\n".join(lines))
 
 
 @router.message(Command("unwatch"))
@@ -203,8 +223,8 @@ async def cmd_history(message: Message) -> None:
         for r in rows
     ]
     await message.answer(
-        f"📈 <b>История лучшей цены</b> по подписке #{watch['id']} «{_html.escape(watch['query'][:40], quote=False)}»:\\n"
-        + "\\n".join(lines)
+        f"📈 <b>История лучшей цены</b> по подписке #{watch['id']} «{_html.escape(watch['query'][:40], quote=False)}»:\n"
+        + "\n".join(lines)
     )
 
 
@@ -218,16 +238,16 @@ async def cmd_diag(message: Message) -> None:
         except Exception as exc:
             status = f"ошибка: {type(exc).__name__}: {exc}"
         lines.append(f"• <b>{getattr(adapter, 'name', '?').upper()}</b>: {status}")
-    await message.answer("🩺 <b>Диагностика маркетплейсов:</b>\\n" + "\\n".join(lines))
+    await message.answer("🩺 <b>Диагностика маркетплейсов:</b>\n" + "\n".join(lines))
 
 
 @router.message(Command("stats"))
 async def cmd_stats(message: Message) -> None:
     s = await db.stats()
     await message.answer(
-        "📊 <b>Сводка по базе:</b>\\n"
-        f"• Подписок: {s['watches']}\\n"
-        f"• Записей истории: {s['history']}\\n"
+        "📊 <b>Сводка по базе:</b>\n"
+        f"• Подписок: {s['watches']}\n"
+        f"• Записей истории: {s['history']}\n"
         f"• Пользователей: {s['users']}"
     )
 
@@ -274,9 +294,9 @@ async def scheduled_check() -> None:
             try:
                 await bot.send_message(
                     watch["user_id"],
-                    f"<b>«{_html.escape(watch['query'][:60], quote=False)}»</b>\\n"
-                    + "\\n".join(msgs)
-                    + f"\\n\\n{_fmt_product(best, cheapest=True)}",
+                    f"<b>«{_html.escape(watch['query'][:60], quote=False)}»</b>\n"
+                    + "\n".join(msgs)
+                    + f"\n\n{_fmt_product(best, cheapest=True)}",
                     parse_mode=ParseMode.HTML,
                 )
             except Exception as exc:

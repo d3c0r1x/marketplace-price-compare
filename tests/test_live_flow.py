@@ -107,9 +107,9 @@ def _make_bot(session: CapturingSession) -> Bot:
 
 def _reset_state(db_path: str, adapters: list | None = None) -> None:
     """Свежая БД, чистый кэш, демо-адаптеры (изоляция между тестами)."""
-    from adapters import MockOzonAdapter, MockWbAdapter
+    from adapters import MockOzonAdapter, MockWbAdapter, MockYandexAdapter
 
-    botmod.adapters = adapters if adapters is not None else [MockWbAdapter(), MockOzonAdapter()]
+    botmod.adapters = adapters if adapters is not None else [MockWbAdapter(), MockOzonAdapter(), MockYandexAdapter()]
     botmod.search_cache = TTLCache(ttl_seconds=300.0)
     botmod.db = Database(db_path)
 
@@ -134,17 +134,17 @@ def test_search_watch_history_flow(tmp_path) -> None:
         assert any("Marketplace Price Comparison" in t for t in _send_texts(session))
         assert any("/search" in t for t in _send_texts(session))
 
-        # /search наушники — «Ищу…» + выдача с обоими маркетплейсами и 🏆
+        # /search наушники — «Ищу…» + выдача со всеми тремя маркетплейсами и 🏆
         session.calls.clear()
         await dp.feed_update(bot, _msg_update("/search наушники", mid := mid + 1, upd := upd + 1))
         texts = _send_texts(session)
         assert any("🔍 Ищу" in t and "наушники" in t for t in texts)
         result = next(t for t in texts if "Сравнение цен" in t)
-        assert "🟣 WB" in result and "🟢 Ozon" in result
+        assert "🟣 WB" in result and "🟢 Ozon" in result and "🔵 Яндекс" in result
         assert "🏆" in result                      # самый дешёвый помечен
         expected = botmod.config.MAX_RESULTS_PER_MARKET
         assert result.count("wildberries.ru") == expected  # все результаты WB со ссылками
-        assert "ozon.ru" in result
+        assert "ozon.ru" in result and "market.yandex.ru" in result
 
         # /watch наушники 3000 — подписка с порогом
         session.calls.clear()

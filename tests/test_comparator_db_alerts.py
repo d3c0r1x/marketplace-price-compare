@@ -5,7 +5,7 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
 
-from adapters import MockOzonAdapter, MockWbAdapter
+from adapters import MockOzonAdapter, MockWbAdapter, MockYandexAdapter
 from alerts import should_notify
 from comparator import best_deal, compare, merge_results
 from db import Database
@@ -48,9 +48,9 @@ def test_compare_parallel_with_mocks() -> None:
     """compare() запускает оба адаптера и возвращает отсортированную выдачу."""
     async def run() -> None:
         merged, best = await compare(
-            "смартфон", [MockWbAdapter(), MockOzonAdapter()], limit=3
+            "смартфон", [MockWbAdapter(), MockOzonAdapter(), MockYandexAdapter()], limit=3
         )
-        assert len(merged) == 6
+        assert len(merged) == 9
         assert best is not None
         assert best.price == min(p.price for p in merged)
         # отсортировано по цене

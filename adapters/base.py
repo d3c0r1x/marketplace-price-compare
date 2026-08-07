@@ -1,6 +1,6 @@
 """Общая HTTP-обвязка адаптеров: транспорты httpx/curl_cffi, retry, заголовки.
 
-Транспорты и логика повторов общие для WB и Ozon — по одному клиенту на
+Транспорты и логика повторов общие для всех маркетплейсов — по одному клиенту на
 маркетплейс, чтобы не дублировать код. Антибот-ситуация описана в README:
 оба публичных API защищены, поэтому предусмотрен прокси и демо-режим.
 """
@@ -110,13 +110,14 @@ class BaseAdapter:
         self._transport = transport if transport is not None else _make_transport()
         self._max_retries = max_retries if max_retries is not None else config.MAX_RETRIES
 
-    async def _get(self, url: str, *, params=None, retries: int | None = None) -> tuple[int, str]:
+    async def _get(self, url: str, *, params=None, retries: int | None = None,
+               extra_headers: dict | None = None) -> tuple[int, str]:
         max_retries = self._max_retries if retries is None else retries
         last_exc: Exception | None = None
         for attempt in range(1, max_retries + 1):
             try:
                 status, text = await self._transport.get(
-                    url, params=params, headers=self.headers
+                    url, params=params, headers={**self.headers, **(extra_headers or {})}
                 )
             except Exception as exc:
                 last_exc = exc
