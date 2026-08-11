@@ -9,6 +9,7 @@ pydantic (модель товара).
   - /watch ЗАПРОС [ЦЕНА] — подписаться на запрос: бот периодически ищет
     заново и уведомляет, если лучшая цена упала или достигла порога;
   - /watches — список подписок; /unwatch ID — удалить подписку;
+  - /threshold ID ЦЕНА — изменить порог подписки;
   - /history ID — история лучших цен по подписке;
   - /diag — диагностика доступа к API; /stats — сводка по базе;
   - /cleanup ДНИ — очистка истории старше N дней (админ).
@@ -106,6 +107,7 @@ async def cmd_start(message: Message) -> None:
         "• /watch <b>ЗАПРОС [ЦЕНА]</b> — следить за запросом, уведомить при падении цены\n"
         "• /watches — мои подписки\n"
         "• /unwatch <b>ID</b> — удалить подписку\n"
+        "• /threshold <b>ID ЦЕНА</b> — изменить порог подписки\n"
         "• /history <b>ID</b> — история лучших цен по подписке\n"
         "• /diag — диагностика доступа к API\n"
         "• /stats — сводка по базе\n"
@@ -206,6 +208,24 @@ async def cmd_unwatch(message: Message) -> None:
         await message.answer(f"Подписка #{parts[1]} не найдена.")
 
 
+@router.message(Command("threshold"))
+async def cmd_threshold(message: Message) -> None:
+    """Меняет порог уведомлений существующей подписки (без пересоздания)."""
+    parts = (message.text or "").split()
+    if len(parts) != 3 or not parts[1].isdigit() or not parts[2].isdigit():
+        await message.answer("Формат: /threshold ID ЦЕНА (например, /threshold 1 2500)")
+        return
+    watch = await db.get_watch(int(parts[1]))
+    if watch is None or watch["user_id"] != message.from_user.id:
+        await message.answer("Подписка не найдена.")
+        return
+    await db.set_threshold(watch["id"], int(parts[2]))
+    await message.answer(
+        f"✅ Порог подписки #{watch['id']} «{_html.escape(watch['query'][:40], quote=False)}» "
+        f"теперь <b>{int(parts[2])} ₽</b>."
+    )
+
+
 @router.message(Command("history"))
 async def cmd_history(message: Message) -> None:
     parts = (message.text or "").split()
@@ -261,6 +281,9 @@ async def cmd_cleanup(message: Message) -> None:
         return
     parts = (message.text or "").split()
     days = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else config.HISTORY_KEEP_DAYS
+    if days < 1:
+        await message.answer("Дни должны быть больше нуля.")
+        return
     deleted = await db.cleanup_history(days)
     await message.answer(f"🧹 Удалено записей истории старше {days} дн.: {deleted}.")
 

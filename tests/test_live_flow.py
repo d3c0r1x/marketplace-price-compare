@@ -304,3 +304,52 @@ def test_search_and_watch_escape_special_chars(tmp_path) -> None:
         await bot.session.close()
 
     asyncio.run(run())
+
+
+
+def test_threshold_and_cleanup_guard(tmp_path) -> None:
+    """/threshold меняет порог подписки; /cleanup 0 отклоняется (guard)."""
+    db_path = str(tmp_path / "cmp.db")
+
+    async def run() -> None:
+        _reset_state(db_path)
+        await botmod.db.init()
+        session = CapturingSession()
+        bot = _make_bot(session)
+        dp = DP
+
+        upd = mid = 0
+        # создаём подписку с порогом 3000
+        await dp.feed_update(bot, _msg_update("/watch наушники 3000", mid := mid + 1, upd := upd + 1))
+        assert any("Подписка #1" in t for t in _send_texts(session))
+        assert (await botmod.db.get_watch(1))["threshold"] == 3000
+
+        # /threshold 1 2500 — порог изменён без пересоздания
+        session.calls.clear()
+        await dp.feed_update(bot, _msg_update("/threshold 1 2500", mid := mid + 1, upd := upd + 1))
+        texts = _send_texts(session)
+        assert any("Порог подписки #1" in t and "2500 ₽" in t for t in texts)
+        assert (await botmod.db.get_watch(1))["threshold"] == 2500
+
+        # /threshold 1 — неверный формат
+        session.calls.clear()
+        await dp.feed_update(bot, _msg_update("/threshold 1", mid := mid + 1, upd := upd + 1))
+        assert any("Формат: /threshold ID ЦЕНА" in t for t in _send_texts(session))
+
+        # /threshold 999 100 — чужой/несуществующий ID
+        session.calls.clear()
+        await dp.feed_update(bot, _msg_update("/threshold 999 100", mid := mid + 1, upd := upd + 1))
+        assert any("Подписка не найдена" in t for t in _send_texts(session))
+
+        # /cleanup 0 — guard: дни должны быть больше нуля
+        session.calls.clear()
+        await dp.feed_update(bot, _msg_update("/cleanup 0", mid := mid + 1, upd := upd + 1))
+        assert any("Дни должны быть больше нуля" in t for t in _send_texts(session))
+        # /cleanup 30 — валидная очистка проходит
+        session.calls.clear()
+        await dp.feed_update(bot, _msg_update("/cleanup 30", mid := mid + 1, upd := upd + 1))
+        assert any("Удалено записей истории" in t for t in _send_texts(session))
+
+        await bot.session.close()
+
+    asyncio.run(run())
