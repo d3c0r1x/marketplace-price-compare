@@ -120,7 +120,9 @@ async def cmd_search(message: Message) -> None:
     if not query:
         await message.answer("Формат: /search ЗАПРОС (например, /search наушники беспроводные)")
         return
-    await message.answer(f"🔍 Ищу «{query}» на Wildberries, Ozon и Яндекс Маркете…")
+    await message.answer(
+        f"🔍 Ищу «{_html.escape(query, quote=False)}» на Wildberries, Ozon и Яндекс Маркете…"
+    )
     products, best = await _compare_cached(query)
     if not products:
         await message.answer(
@@ -163,7 +165,7 @@ async def cmd_watch(message: Message) -> None:
     await db.save_check(watch_id, best_price, best.marketplace if best else "—")
     await db.update_last_notified(watch_id, best_price)
     txt = (
-        f"✅ Подписка #{watch_id} на запрос «{query}» создана.\n"
+        f"✅ Подписка #{watch_id} на запрос «{_html.escape(query, quote=False)}» создана.\n"
         f"Текущая лучшая цена: <b>{best_price} ₽</b>"
         + (f" ({best.marketplace.upper()})" if best else "")
     )

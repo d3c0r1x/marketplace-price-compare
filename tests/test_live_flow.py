@@ -265,3 +265,42 @@ def test_watch_requires_query(tmp_path) -> None:
         await bot.session.close()
 
     asyncio.run(run())
+
+def test_search_and_watch_escape_special_chars(tmp_path) -> None:
+    """Запрос с HTML-спецсимволами (&, теги) экранируется в ответах.
+
+    Без экранирования «&» в ParseMode.HTML — битая entity: Telegram вернул бы
+    400 «can't parse entities» и сообщение бы не ушло. Проверяем через
+    настоящий Dispatcher, что в текст уходит экранированная версия.
+    """
+    db_path = str(tmp_path / "cmp.db")
+
+    async def run() -> None:
+        _reset_state(db_path)
+        await botmod.db.init()
+        session = CapturingSession()
+        bot = _make_bot(session)
+        dp = DP
+
+        upd = mid = 0
+        # /search с «&» — запрос экранирован, сырой & не уходит
+        await dp.feed_update(bot, _msg_update("/search S&P 500", mid := mid + 1, upd := upd + 1))
+        texts = _send_texts(session)
+        assert any("S&amp;P 500" in t for t in texts)
+        assert not any("Ищу «S&P 500»" in t for t in texts)
+
+        # /watch с «&» — экранирование и в подтверждении подписки
+        session.calls.clear()
+        await dp.feed_update(bot, _msg_update("/watch S&P игрушка", mid := mid + 1, upd := upd + 1))
+        texts = _send_texts(session)
+        assert any("S&amp;P игрушка" in t and "создана" in t for t in texts)
+
+        # запрос с тегами — рендерится как текст, а не как HTML
+        session.calls.clear()
+        await dp.feed_update(bot, _msg_update("/search <b>наушники</b>", mid := mid + 1, upd := upd + 1))
+        texts = _send_texts(session)
+        assert any("&lt;b&gt;наушники&lt;/b&gt;" in t for t in texts)
+
+        await bot.session.close()
+
+    asyncio.run(run())
