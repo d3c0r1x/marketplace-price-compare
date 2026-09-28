@@ -134,7 +134,16 @@ async def cmd_search(message: Message) -> None:
         return
     lines = [_fmt_product(p, cheapest=(best is not None and p.ext_id == best.ext_id and p.marketplace == best.marketplace))
              for p in products]
-    await message.answer("📊 <b>Сравнение цен:</b>\n" + "\n".join(lines))
+    header = "📊 <b>Сравнение цен:</b>"
+    if best is not None:
+        prices = [p.price for p in products if p.price and p.price > 0]
+        if len(prices) > 1:
+            spread = max(prices) - min(prices)
+            header += (
+                f"\n🏆 Лучшая цена: <b>{best.price} ₽</b> ({best.marketplace.upper()}) · "
+                f"разброс: {spread} ₽"
+            )
+    await message.answer(header + "\n" + "\n".join(lines))
 
 
 async def _compare_cached(query: str) -> tuple[list[Product], Product | None]:
