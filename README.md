@@ -1,103 +1,20 @@
-# Marketplace Price Comparison
+# Marketplace Price Compare
 
-[![CI](https://github.com/d3c0r1x/marketplace-price-compare/actions/workflows/ci.yml/badge.svg)](https://github.com/d3c0r1x/marketplace-price-compare/actions/workflows/ci.yml)
+> **Prototype / supporting project.** The broader version of this idea lives in [Smart Shopper](https://github.com/d3c0r1x/smart-shopper).
 
-Telegram-бот для сравнения цен на одни и те же товары на **Wildberries**, **Ozon** и **Яндекс Маркете**. Поисковый запрос отправляется во все маркетплейсы параллельно, выдача объединяется, сортируется по цене, и самый дешёвый вариант помечается. Дополнительно можно подписаться на запрос (`/watch`): бот периодически ищет заново и уведомляет, когда лучшая цена упала или достигла порога.
+Telegram bot that searches Ozon, Wildberries and Yandex Market in parallel, normalises results and compares offers.
 
-## 🕹 Живое демо
+## What it demonstrates
 
-Онлайн-демо не опубликовано: поллинг Telegram требует постоянно работающего процесса. Локальный запуск — `start.bat` (см. раздел «Запуск»); витрина всех проектов — [d3c0r1x.github.io](https://d3c0r1x.github.io).
+- parallel API calls;
+- normalisation of different marketplace schemas;
+- deduplication and sorting;
+- price-watch subscriptions;
+- scheduled background checks;
+- SQLite persistence and tests.
 
-## Возможности
+## Stack
 
-- **/search ЗАПРОС** — сравнение цен прямо сейчас (WB + Ozon + Яндекс, сортировка по цене, пометка самого дешёвого);
-- **/watch ЗАПРОС [ЦЕНА]** — подписка на запрос: уведомление при падении лучшей цены или при достижении порога;
-- **/watches**, **/unwatch** — управление подписками;
-- **/history ID** — история лучшей цены по подписке;
-- **/diag** — диагностика доступности API всех маркетплейсов;
-- **/stats**, **/cleanup** — сводка по базе и плановая очистка истории;
-- параллельный поиск (`asyncio.gather`): сбой одного маркетплейса не останавливает другой;
-- дедупликация по `(маркетплейс, ID)`, товары с неизвестной ценой уходят в конец выдачи;
-- TTL-кэш поисковых выдач и кулдаун уведомлений по подписке.
+Python · aiogram · asyncio · SQLite · APScheduler · pytest · GitHub Actions
 
-## Команды
-
-| Команда | Описание |
-|---|---|
-| `/start` | Справка |
-| `/search ЗАПРОС` | Сравнить цены сейчас |
-| `/watch ЗАПРОС [ЦЕНА]` | Подписаться на запрос (необязательный порог) |
-| `/watches` | Список подписок |
-| `/unwatch ID` | Удалить подписку |
-| `/threshold ID ЦЕНА` | Изменить порог подписки |
-| `/history ID` | История лучшей цены по подписке |
-| `/diag` | Диагностика API |
-| `/stats` | Сводка по базе |
-| `/cleanup ДНИ` | Очистить историю старше N дней |
-
-## Структура
-
-```
-marketplace-price-compare/
-├── bot.py                 # точка входа: команды, планировщик, рассылка уведомлений
-├── config.py              # настройки через переменные окружения
-├── models.py              # единая модель товара Product (pydantic)
-├── comparator.py          # слияние выдач, сортировка, лучшая цена, параллельный поиск
-├── adapters/
-│   ├── base.py            # транспорты httpx/curl_cffi, retry, общие заголовки
-│   ├── wb.py              # поиск по search.wb.ru (цены из копеек) + демо-режим
-│   ├── ozon.py            # поиск по composer-api Ozon (парсер widgetStates) + демо-режим
-│   └── yandex.py          # официальное API Yandex Market (по ключу) + демо-режим
-├── db.py                  # SQLite (aiosqlite): подписки, пороги, история лучших цен
-├── alerts.py              # чистая логика уведомлений (падение лучшей цены, порог, кулдаун)
-├── middlewares.py         # троттлинг и логирование (aiogram)
-├── utils.py               # TTL-кэш и retry с экспоненциальным backoff (stdlib)
-├── tests/                 # pytest: парсеры, компаратор, БД, логика уведомлений
-├── Dockerfile, pyproject.toml, CI
-└── start.bat          # запуск на Windows: токен из корневого .env, демо-режим
-```
-
-## Установка и запуск
-
-```bash
-pip install -r requirements.txt
-export MARKET_BOT_TOKEN=123456:ABC...   # токен от @BotFather
-export MARKET_DEMO_MODE=1               # 1 — демо-данные, 0 — реальные API
-python bot.py
-```
-
-На Windows: `start.bat` самостоятельно читает `TG_TOKEN` из корневого `.env` и запускает бота из `.venv`.
-
-## Переменные окружения
-
-Полный список — в `.env.example`. Основные:
-
-| Переменная | Значение по умолчанию | Назначение |
-|---|---|---|
-| `MARKET_BOT_TOKEN` | — | Токен бота (обязательно) |
-| `MARKET_DEMO_MODE` | `0` | `1` — выдуманные данные без сети |
-| `MARKET_HTTP_CLIENT` | `curl_cffi` | Транспорт: `curl_cffi` / `httpx` |
-| `MARKET_PROXY` | — | Прокси для запросов к маркетплейсам |
-| `MARKET_CHECK_INTERVAL_MINUTES` | `240` | Периодичность проверки подписок |
-| `MARKET_MAX_RESULTS_PER_MARKET` | `5` | Результатов в выдаче каждого маркетплейса |
-| `MARKET_YANDEX_API_KEY` | — | API-ключ Yandex Market (бесплатный, кабинет разработчика Yandex) |
-| `MARKET_YANDEX_REGION` | `213` | Регион поиска Yandex Market (213 = Москва, 225 = Россия) |
-| `MARKET_ALERT_COOLDOWN_HOURS` | `12` | Кулдаун уведомлений по подписке |
-| `MARKET_HISTORY_KEEP_DAYS` | `30` | Срок хранения истории |
-| `MARKET_ADMIN_IDS` | — | ID администраторов для `/cleanup` |
-
-## Технические особенности
-
-1. **Публичные API WB и Ozon защищены антиботом.** WB (`search.wb.ru`) с заблокированного IP отдаёт HTTP 429/403 или «фейковую» пустоту с кодом 200; Ozon (`composer-api`) — HTTP 307 (редирект-петля без region-cookie). Адаптеры корректно обрабатывают эти ситуации (пустая выдача, без исключений и повторов), реальные данные требуют `MARKET_PROXY` либо демо-режима. Yandex Market работает через официальное публичное API с бесплатным ключом: без ключа площадка пропускается, при HTTP 401 выдача пустая.
-2. **Единая модель товара** `Product` (pydantic): адаптеры приводят свои ответы к одному виду — это позволяет смешивать и сортировать выдачи без знания внутренностей каждого API.
-3. **Устойчивый парсер Ozon**: виджеты `webSearchResults` разбираются рекурсивно (`_find_products` ищет объекты с `id` и `title` на любой глубине); цены нормализуются из строк рублей, копеек и вложенных объектов.
-4. **Компаратор — чистая функция** `merge_results()`: дедупликация, сортировка по цене, нулевые цены в конце; `best_deal()` игнорирует товары с неизвестной ценой. Покрыт unit-тестами, включая отказоустойчивость (`asyncio.gather` с обработкой ошибок).
-5. **Цены WB приходят в копейках** (`priceU`/`salePriceU`) — деление на 100 выполняется в адаптере, наружу отдаются целые рубли.
-
-6. **Yandex Market — официальное API**: запрос `v2/models` с ключом в заголовке `Authorization`; цены приходят в рублях с дробной частью и округляются, остатки публичное API не отдаёт. Ключ бесплатный, выдаётся в кабинете разработчика Yandex.
-
-## Планы развития
-
-- сравнение по конкретному артикулу (а не только по текстовому запросу);
-- график динамики лучшей цены по подписке;
-- учёт стоимости доставки в итоговом сравнении.
+This repository is intentionally small and focused. For the end-to-end product with AI search, review analysis, Vision and a web Mini App, see Smart Shopper.
