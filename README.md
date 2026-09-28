@@ -1,5 +1,7 @@
 # Marketplace Price Comparison
 
+[![CI](https://github.com/d3c0r1x/marketplace-price-compare/actions/workflows/ci.yml/badge.svg)](https://github.com/d3c0r1x/marketplace-price-compare/actions/workflows/ci.yml)
+
 Telegram-бот для сравнения цен на одни и те же товары на **Wildberries**, **Ozon** и **Яндекс Маркете**. Поисковый запрос отправляется во все маркетплейсы параллельно, выдача объединяется, сортируется по цене, и самый дешёвый вариант помечается. Дополнительно можно подписаться на запрос (`/watch`): бот периодически ищет заново и уведомляет, когда лучшая цена упала или достигла порога.
 
 ## 🕹 Живое демо
